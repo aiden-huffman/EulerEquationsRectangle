@@ -15,21 +15,24 @@ public:
   void run();
 
 private:
-  MPI_Comm mpi_communicator;
+  MPI_Comm mpi_comm;
   ConditionalOStream pcout;
 
   grid::SystemHandler<dim> system_handler;
+  assembly::EulerEquationAssembler<dim> assembler;
 };
 
 template <int dim>
 Solver<dim>::Solver(const std::string filename)
-    : mpi_communicator(MPI_COMM_WORLD),
-      pcout(std::cout,
-            (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)),
-      system_handler(filename, mpi_communicator, pcout){};
+    : mpi_comm(MPI_COMM_WORLD),
+      pcout(std::cout, (Utilities::MPI::this_mpi_process(mpi_comm) == 0)),
+      system_handler(filename, mpi_comm, pcout),
+      assembler(mpi_comm, pcout, &system_handler){};
 
 template <int dim> void Solver<dim>::run() {
   this->pcout << "Running..." << std::endl;
+
+  this->system_handler.initialise_dofs();
 }
 
 } // namespace ns_solver
