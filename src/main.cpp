@@ -11,7 +11,9 @@ using namespace dealii;
 
 template <int dim> class Solver {
 public:
-  Solver<dim>(const std::string filename);
+  Solver<dim>(const std::string filename,
+              grid::FiniteElementDescription fe_params,
+              assembly::EquationParameters eqn_params);
   void run();
 
 private:
@@ -23,23 +25,38 @@ private:
 };
 
 template <int dim>
-Solver<dim>::Solver(const std::string filename)
+Solver<dim>::Solver(const std::string filename,
+                    grid::FiniteElementDescription fe_params,
+                    assembly::EquationParameters eqn_params)
     : mpi_comm(MPI_COMM_WORLD),
       pcout(std::cout, (Utilities::MPI::this_mpi_process(mpi_comm) == 0)),
-      system_handler(filename, mpi_comm, pcout),
-      assembler(mpi_comm, pcout, &system_handler){};
+      system_handler(filename, mpi_comm, pcout, fe_params),
+      assembler(mpi_comm, pcout, &system_handler, eqn_params){};
 
 template <int dim> void Solver<dim>::run() {
   this->pcout << "Running..." << std::endl;
 
   this->system_handler.initialise_dofs();
+  this->assembler.assemble_system();
 }
 
 } // namespace ns_solver
 
 int main(int argc, char* argv[]) {
 
+  assembly::EquationParameters eqn_params;
+  grid::FiniteElementDescription fe_params;
+
+  fe_params.debug = false;
+  fe_params.min_refine = 4;
+  fe_params.max_refine = 10;
+  fe_params.degree = 1;
+
+  eqn_params.timestep = 1e-2;
+  eqn_params.nu = 1e-2;
+  eqn_params.density = 1;
+
   dealii::Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 2);
-  ns_solver::Solver<2> solver("mesh.msh");
+  ns_solver::Solver<2> solver("mesh.msh", fe_params, eqn_params);
   solver.run();
 }

@@ -41,14 +41,22 @@ namespace grid {
 
 using namespace dealii;
 
+struct FiniteElementDescription {
+  uint min_refine, max_refine;
+  uint degree;
+  bool debug;
+};
 template <int dim> class SystemHandler {
 public:
   SystemHandler<dim>(const std::string filename, MPI_Comm mpi_communicator,
-                     ConditionalOStream pcout);
+                     ConditionalOStream pcout,
+                     FiniteElementDescription fe_params);
   void print_grid_information();
 
   MPI_Comm mpi_comm;
   ConditionalOStream pcout;
+
+  FiniteElementDescription fe_params;
 
   parallel::distributed::Triangulation<dim> triangulation;
   DoFHandler<dim> dof_handler;
@@ -82,14 +90,17 @@ public:
 
 template <int dim>
 SystemHandler<dim>::SystemHandler(const std::string filename, MPI_Comm mpi_comm,
-                                  ConditionalOStream pcout)
-    : mpi_comm(mpi_comm), pcout(pcout),
+                                  ConditionalOStream pcout,
+                                  FiniteElementDescription fe_params)
+    : mpi_comm(mpi_comm), pcout(pcout), fe_params(fe_params),
       triangulation(
           mpi_comm,
           typename Triangulation<dim>::MeshSmoothing(
               Triangulation<dim>::MeshSmoothing::smoothing_on_refinement |
               Triangulation<dim>::MeshSmoothing::smoothing_on_coarsening)),
-      dof_handler(triangulation), fe_system(FE_Q<dim>(2), dim, FE_Q<dim>(1), 1),
+      dof_handler(triangulation),
+      fe_system(FE_Q<dim>(fe_params.degree + 1), dim,
+                FE_Q<dim>(fe_params.degree), 1),
       fe_sub_blocks(dim + 1, 0) {
 
   if (dim != 2) {
