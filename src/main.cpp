@@ -2,7 +2,7 @@
 #include <deal.II/grid/grid_in.h>
 #include <iostream>
 
-#include "euler_equation.h"
+#include "assembly.h"
 #include "system_handler.h"
 
 namespace ns_solver {
@@ -19,7 +19,7 @@ private:
   ConditionalOStream pcout;
 
   grid::SystemHandler<dim> system_handler;
-  assembly::EulerEquationAssembler<dim> assembler;
+  assembly::Assembler<dim> assembler;
 };
 
 template <int dim>
@@ -37,7 +37,7 @@ template <int dim> void Solver<dim>::run() {
 
 } // namespace ns_solver
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
 
   dealii::Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 2);
   ns_solver::Solver<2> solver("mesh.msh");
