@@ -1,9 +1,11 @@
 #ifndef EULER_EQ
 #define EULER_EQ
 
+#include <cstdlib>
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/exceptions.h>
 #include <deal.II/base/mpi.h>
+#include <deal.II/base/quadrature.h>
 #include <deal.II/base/work_stream.h>
 
 #include <deal.II/base/types.h>
@@ -41,19 +43,43 @@ template <int dim> struct SystemCell {
   std::vector<double> u_div_0;
   std::vector<Tensor<2, dim>> u_grad_0;
 
-  std::vector<Tensor<1, dim>> u_sol_1;
+  /*std::vector<Tensor<1, dim>> u_sol_1;
   std::vector<Tensor<1, dim>> u_lap_1;
-  std::vector<Tensor<2, dim>> u_grad_1;
+  std::vector<Tensor<2, dim>> u_grad_1;*/
 
   std::vector<double> p_shape_val;
   std::vector<Tensor<1, dim>> p_shape_grad;
 };
+
+template <int dim>
+SystemCell<dim>::SystemCell(const FiniteElement<dim>& fe,
+                            const Quadrature<dim>& quad_formula,
+                            const UpdateFlags update_flags)
+    : fe_vals(fe, quad_formula, update_flags),
+      u_shape_val(fe_vals.dofs_per_cell), u_shape_grad(fe_vals.dofs_per_cell),
+      u_sol_0(quad_formula.size()), u_lap_0(quad_formula.size()),
+      u_adv_0(quad_formula.size()), u_div_0(quad_formula.size()),
+      u_grad_0(quad_formula.size()), p_shape_val(fe_vals.dofs_per_cell),
+      p_shape_grad(fe_vals.dofs_per_cell) {}
+
+template <int dim>
+SystemCell<dim>::SystemCell(const SystemCell& system_cell)
+    : fe_vals(system_cell.fe_vals.get_fe(),
+              system_cell.fe_vals.get_quadrature(),
+              system_cell.fe_vals.get_update_flags()),
+      u_shape_val(system_cell.u_shape_val),
+      u_shape_grad(system_cell.u_shape_grad), u_sol_0(system_cell.u_sol_0),
+      u_lap_0(system_cell.u_lap_0), u_adv_0(system_cell.u_adv_0),
+      u_div_0(system_cell.u_div_0), u_grad_0(system_cell.u_grad_0),
+      p_shape_val(system_cell.p_shape_val),
+      p_shape_grad(system_cell.p_shape_grad) {}
 
 template <int dim> struct PreconCell {
   PreconCell(const FiniteElement<dim>& fe, const Quadrature<dim>& quad_formula,
              const UpdateFlags update_flags);
   PreconCell(const PreconCell& system_cell);
 };
+
 } // namespace scratch
 
 namespace copy {
@@ -70,7 +96,7 @@ template <int dim> struct LocalData {
   std::vector<types::global_dof_index> local_dof_indices;
 };
 
-template <int dim> struct LocalPrecon {
+/*template <int dim> struct LocalPrecon {
 
   LocalPrecon(const FiniteElement<dim>& fe);
   LocalPrecon(const LocalPrecon<dim>& data);
@@ -81,7 +107,18 @@ template <int dim> struct LocalPrecon {
   Vector<double> local_rhs;
 
   std::vector<types::global_dof_index> local_dof_indices;
-};
+};*/
+
+template <int dim>
+LocalData<dim>::LocalData(const FiniteElement<dim>& fe)
+    : local_matrix(fe.n_dofs_per_cell(), fe.n_dofs_per_cell()),
+      local_rhs(fe.n_dofs_per_cell()), local_dof_indices(fe.n_dofs_per_cell()) {
+}
+
+template <int dim>
+LocalData<dim>::LocalData(const LocalData& data)
+    : local_matrix(data.local_matrix), local_rhs(data.local_rhs),
+      local_dof_indices(data.local_dof_indices) {}
 
 } // namespace copy
 
@@ -265,7 +302,7 @@ template <int dim> void Assembler<dim>::assemble_system() {
                       ptr_system_handler->fe_system,
                       QGauss<dim>(ptr_system_handler->fe_params.degree + 2),
                       update_values | update_gradients | update_JxW_values |
-                          update_quadrature_points),
+                          update_quadrature_points | update_hessians),
                   copy::LocalData<dim>(ptr_system_handler->fe_system));
 
   ptr_system_handler->rhs.compress(VectorOperation::add);
