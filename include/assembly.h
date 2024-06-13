@@ -240,27 +240,27 @@ void Assembler<dim>::assemble_cell(
       if (assemble_matrix) {
         for (uint j = 0; j < dofs_per_cell; j++) {
           // <v_i, v_j> + <\nabla v_i, \nabla v_j>
-          copy.local_matrix[i][j] =
+          copy.local_matrix[i][j] +=
               (scratch.u_shape_val[i] * scratch.u_shape_val[j] +
                this->eqn_params.nu * scalar_product(scratch.u_shape_grad[i],
                                                     scratch.u_shape_grad[j])) *
               scratch.fe_vals.JxW(q);
 
           // <\nabla q_i, \nabla q_j>
-          copy.local_matrix[i][j] = scratch.p_shape_grad[i] *
-                                    scratch.p_shape_grad[j] *
-                                    scratch.fe_vals.JxW(q);
+          copy.local_matrix[i][j] += scratch.p_shape_grad[i] *
+                                     scratch.p_shape_grad[j] *
+                                     scratch.fe_vals.JxW(q);
         }
       }
 
       if (assemble_velocity) {
         // <v_i, u(q)\cdot\nabla u(q)>
-        copy.local_rhs[i] = scratch.u_shape_val[i] * scratch.u_adv_0[q] *
-                            scratch.fe_vals.JxW(q);
+        copy.local_rhs[i] += scratch.u_shape_val[i] * scratch.u_adv_0[q] *
+                             scratch.fe_vals.JxW(q);
       } else if (assemble_pressure) {
         // <q_i, \nabla\cdot u(q)>
-        copy.local_rhs[i] = (scratch.p_shape_val[i] * scratch.u_div_0[q]) *
-                            scratch.fe_vals.JxW(q);
+        copy.local_rhs[i] += (scratch.p_shape_val[i] * scratch.u_div_0[q]) *
+                             scratch.fe_vals.JxW(q);
       }
     }
   }
@@ -275,7 +275,7 @@ void Assembler<dim>::copy_cell(const copy::LocalData<dim>& data) {
 
 template <int dim> void Assembler<dim>::assemble_system() {
 
-  ptr_system_handler->pcout << "Running assembly" << std::endl;
+  ptr_system_handler->pcout << "\nRunning assembly" << std::endl;
 
   ptr_system_handler->rhs = 0;
   ptr_system_handler->system_matrix = 0;
@@ -283,7 +283,7 @@ template <int dim> void Assembler<dim>::assemble_system() {
   auto worker =
       [this](const typename DoFHandler<dim>::active_cell_iterator& cell,
              scratch::SystemCell<dim>& scratch, copy::LocalData<dim>& data) {
-        this->assemble_cell(cell, scratch, data);
+        this->assemble_cell(cell, scratch, data, true, true, false);
       };
 
   auto copier = [this](const copy::LocalData<dim>& data) {

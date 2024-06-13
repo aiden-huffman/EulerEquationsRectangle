@@ -38,6 +38,19 @@ template <int dim> void Solver<dim>::run() {
 
   this->system_handler.initialise_dofs();
   this->assembler.assemble_system();
+
+  this->pcout << "Matrix Norms:" << "\n\tBlock (0,0):"
+              << this->system_handler.system_matrix.block(0, 0).l1_norm()
+              << "\n\tBlock (0,1):"
+              << this->system_handler.system_matrix.block(0, 1).l1_norm()
+              << "\n\tBlock (1,0):"
+              << this->system_handler.system_matrix.block(1, 0).l1_norm()
+              << "\n\tBlock (1,1):"
+              << this->system_handler.system_matrix.block(1, 1).l1_norm()
+              << "\n\nVector Norms:" << "\n\tBlock 0: "
+              << this->system_handler.rhs.block(0).l2_norm()
+              << "\n\tBlock 1: " << this->system_handler.rhs.block(1).l2_norm()
+              << std::endl;
 }
 
 } // namespace ns_solver
