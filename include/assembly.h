@@ -146,9 +146,11 @@ public:
                      copy::LocalData<dim>& copy, bool assemble_matrix = true,
                      bool assemble_velocity = true,
                      bool assemble_pressure = false);
-  void copy_cell(const copy::LocalData<dim>& data);
+  void copy_cell(const copy::LocalData<dim>& data, bool assemble_matrix);
 
   void assemble_system();
+  void assemble_pressure();
+  void assemble_update();
 };
 
 template <int dim>
@@ -239,14 +241,19 @@ void Assembler<dim>::assemble_cell(
 
       if (assemble_matrix) {
         for (uint j = 0; j < dofs_per_cell; j++) {
-          // <v_i, v_j> + <\nabla v_i, \nabla v_j>
+          // Block (0,0): <v_i, v_j> + <\nabla v_i, \nabla v_j>
           copy.local_matrix[i][j] +=
               (scratch.u_shape_val[i] * scratch.u_shape_val[j] +
                this->eqn_params.nu * scalar_product(scratch.u_shape_grad[i],
                                                     scratch.u_shape_grad[j])) *
               scratch.fe_vals.JxW(q);
 
-          // <\nabla q_i, \nabla q_j>
+          // Block (0,1): <v_i, \nabla q_j>
+          copy.local_matrix[i][j] +=
+              (scratch.u_shape_val[i] * scratch.p_shape_grad[j]) *
+              scratch.fe_vals.JxW(q);
+
+          // Block (1,1): <\nabla q_i, \nabla q_j>
           copy.local_matrix[i][j] += scratch.p_shape_grad[i] *
                                      scratch.p_shape_grad[j] *
                                      scratch.fe_vals.JxW(q);
@@ -257,7 +264,8 @@ void Assembler<dim>::assemble_cell(
         // <v_i, u(q)\cdot\nabla u(q)>
         copy.local_rhs[i] += scratch.u_shape_val[i] * scratch.u_adv_0[q] *
                              scratch.fe_vals.JxW(q);
-      } else if (assemble_pressure) {
+      }
+      if (assemble_pressure) {
         // <q_i, \nabla\cdot u(q)>
         copy.local_rhs[i] += (scratch.p_shape_val[i] * scratch.u_div_0[q]) *
                              scratch.fe_vals.JxW(q);
@@ -267,10 +275,17 @@ void Assembler<dim>::assemble_cell(
 }
 
 template <int dim>
-void Assembler<dim>::copy_cell(const copy::LocalData<dim>& data) {
-  ptr_system_handler->constraints.distribute_local_to_global(
-      data.local_matrix, data.local_rhs, data.local_dof_indices,
-      ptr_system_handler->system_matrix, ptr_system_handler->rhs);
+void Assembler<dim>::copy_cell(const copy::LocalData<dim>& data,
+                               bool assemble_matrix) {
+
+  if (assemble_matrix) {
+    ptr_system_handler->constraints.distribute_local_to_global(
+        data.local_matrix, data.local_rhs, data.local_dof_indices,
+        ptr_system_handler->system_matrix, ptr_system_handler->rhs);
+  } else {
+    ptr_system_handler->constraints.distribute_local_to_global(
+        data.local_rhs, data.local_dof_indices, ptr_system_handler->rhs);
+  }
 }
 
 template <int dim> void Assembler<dim>::assemble_system() {
@@ -287,7 +302,7 @@ template <int dim> void Assembler<dim>::assemble_system() {
       };
 
   auto copier = [this](const copy::LocalData<dim>& data) {
-    this->copy_cell(data);
+    this->copy_cell(data, true);
   };
 
   using CellFilter =
@@ -307,6 +322,39 @@ template <int dim> void Assembler<dim>::assemble_system() {
 
   ptr_system_handler->rhs.compress(VectorOperation::add);
   ptr_system_handler->system_matrix.compress(VectorOperation::add);
+}
+
+template <int dim> void Assembler<dim>::assemble_pressure() {
+
+  ptr_system_handler->pcout << "\nRunning pressure assembly" << std::endl;
+  ptr_system_handler->rhs = 0;
+
+  auto worker =
+      [this](const typename DoFHandler<dim>::active_cell_iterator& cell,
+             scratch::SystemCell<dim>& scratch, copy::LocalData<dim>& data) {
+        this->assemble_cell(cell, scratch, data, false, false, true);
+      };
+
+  auto copier = [this](const copy::LocalData<dim>& data) {
+    this->copy_cell(data, false);
+  };
+
+  using CellFilter =
+      FilteredIterator<typename DoFHandler<dim>::active_cell_iterator>;
+
+  WorkStream::run(CellFilter(IteratorFilters::LocallyOwnedCell(),
+                             ptr_system_handler->dof_handler.begin_active()),
+                  CellFilter(IteratorFilters::LocallyOwnedCell(),
+                             ptr_system_handler->dof_handler.end()),
+                  worker, copier,
+                  scratch::SystemCell<dim>(
+                      ptr_system_handler->fe_system,
+                      QGauss<dim>(ptr_system_handler->fe_params.degree + 2),
+                      update_values | update_gradients | update_JxW_values |
+                          update_quadrature_points | update_hessians),
+                  copy::LocalData<dim>(ptr_system_handler->fe_system));
+
+  ptr_system_handler->rhs.compress(VectorOperation::add);
 }
 
 } // namespace assembly

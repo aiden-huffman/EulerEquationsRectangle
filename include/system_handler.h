@@ -2,6 +2,7 @@
 #define SYS_HANDLER
 
 #include <deal.II/base/conditional_ostream.h>
+#include <deal.II/base/data_out_base.h>
 #include <deal.II/base/function.h>
 #include <deal.II/base/index_set.h>
 #include <deal.II/base/mpi.h>
@@ -20,6 +21,7 @@
 
 #include <deal.II/grid/grid_in.h>
 #include <deal.II/grid/grid_out.h>
+#include <deal.II/grid/grid_tools.h>
 #include <deal.II/grid/tria.h>
 
 #include <deal.II/lac/affine_constraints.h>
@@ -31,9 +33,11 @@
 #include <deal.II/lac/trilinos_sparsity_pattern.h>
 #include <deal.II/lac/trilinos_vector.h>
 
+#include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/vector_tools.h>
 #include <deal.II/numerics/vector_tools_boundary.h>
 #include <deal.II/numerics/vector_tools_interpolate.h>
+
 #include <fstream>
 #include <iostream>
 
@@ -85,7 +89,7 @@ public:
   void initialise_linear_system(IndexPartitioning local_part,
                                 IndexPartitioning rel_part);
 
-  void export_solution();
+  void export_solution(uint i);
 };
 
 template <int dim>
@@ -112,6 +116,16 @@ SystemHandler<dim>::SystemHandler(const std::string filename, MPI_Comm mpi_comm,
   grid_in.attach_triangulation(this->triangulation);
   std::ifstream f(filename);
   grid_in.read_msh(f);
+
+  if (dim > 1) {
+
+    using MatchedPairs =
+        GridTools::PeriodicFacePair<typename Triangulation<dim>::cell_iterator>;
+    std::vector<MatchedPairs> matched_pairs_X;
+    GridTools::collect_periodic_faces(this->triangulation, 20, 21, 0,
+                                      matched_pairs_X);
+    triangulation.add_periodicity(matched_pairs_X);
+  }
 
   this->print_grid_information();
 
@@ -221,7 +235,7 @@ template <int dim> void SystemHandler<dim>::initialise_dofs() {
 
   {
     VectorTools::interpolate_boundary_values(
-        this->dof_handler, 2, Functions::ConstantFunction<dim>(1.0, dim + 1),
+        this->dof_handler, 18, Functions::ConstantFunction<dim>(1.0, dim + 1),
         this->constraints, velocity_mask);
 
     for (uint i = 1; i < dim; i++) {
@@ -229,11 +243,27 @@ template <int dim> void SystemHandler<dim>::initialise_dofs() {
     }
 
     VectorTools::interpolate_boundary_values(
-        this->dof_handler, 0, Functions::ZeroFunction<dim>(dim + 1),
+        this->dof_handler, 19, Functions::ZeroFunction<dim>(dim + 1),
         this->constraints, velocity_mask);
+
+    velocity_mask.set(0, false);
     VectorTools::interpolate_boundary_values(
-        this->dof_handler, 2, Functions::ZeroFunction<dim>(dim + 1),
+        this->dof_handler, 18, Functions::ZeroFunction<dim>(dim + 1),
         this->constraints, velocity_mask);
+
+    velocity_mask.set(0, true);
+    velocity_mask.set(dim, true);
+    const FEValuesExtractors::Vector velocity(0);
+    ComponentMask flow_mask = this->fe_system.component_mask(velocity);
+    flow_mask.set(dim, true);
+
+    using FacePair =
+        GridTools::PeriodicFacePair<typename DoFHandler<dim>::cell_iterator>;
+    std::vector<FacePair> periodicity_vector_X;
+    GridTools::collect_periodic_faces(this->dof_handler, 20, 21, 0,
+                                      periodicity_vector_X);
+    DoFTools::make_periodicity_constraints<dim, dim>(
+        periodicity_vector_X, this->constraints, flow_mask);
   }
 
   this->constraints.make_consistent_in_parallel(owned_index_set, relevant_set,
@@ -275,14 +305,41 @@ void SystemHandler<dim>::initialise_linear_system(
               << "\n\tBlock 1: " << this->rhs.block(1).size() << std::endl;
 }
 
-template <int dim>
-void SystemHandler<dim>::export_solution() {
+template <int dim> void SystemHandler<dim>::export_solution(uint i) {
+  std::vector<DataComponentInterpretation::DataComponentInterpretation>
+      data_interp(dim,
+                  DataComponentInterpretation::component_is_part_of_vector);
+  data_interp.push_back(DataComponentInterpretation::component_is_scalar);
 
+  std::vector<std::string> component_names(dim, "velocity");
+  component_names.emplace_back("pressure");
+
+  DataOut<dim> data_out;
+  data_out.add_data_vector(this->dof_handler, this->sol_0, component_names,
+                           data_interp);
+
+  data_out.build_patches();
+
+  data_out.write_vtu_with_pvtu_record("data/", "solution", i, mpi_comm, 3);
 };
 
 template <int dim> void SystemHandler<dim>::print_grid_information() {
   this->pcout << "Sucessfully loaded triangulation:\n\tNumber of cells: ";
   this->pcout << this->triangulation.n_active_cells() << std::endl;
+
+  {
+    std::map<types::boundary_id, unsigned int> boundary_count;
+    for (const auto& face : triangulation.active_face_iterators())
+      if (face->at_boundary())
+        boundary_count[face->boundary_id()]++;
+
+    std::cout << " boundary indicators: ";
+    for (const std::pair<const types::boundary_id, unsigned int>& pair :
+         boundary_count) {
+      std::cout << pair.first << '(' << pair.second << " times) ";
+    }
+    std::cout << std::endl;
+  }
 
   std::string out_name = "mesh";
   GridOut grid_out;
