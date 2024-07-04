@@ -244,8 +244,9 @@ void Assembler<dim>::assemble_cell(
           // Block (0,0): <v_i, v_j> + <\nabla v_i, \nabla v_j>
           copy.local_matrix[i][j] +=
               (scratch.u_shape_val[i] * scratch.u_shape_val[j] +
-               this->eqn_params.nu * scalar_product(scratch.u_shape_grad[i],
-                                                    scratch.u_shape_grad[j])) *
+               this->eqn_params.timestep * this->eqn_params.nu *
+                   scalar_product(scratch.u_shape_grad[i],
+                                  scratch.u_shape_grad[j])) *
               scratch.fe_vals.JxW(q);
 
           // Block (0,1): <v_i, \nabla q_j>
@@ -262,7 +263,9 @@ void Assembler<dim>::assemble_cell(
 
       if (assemble_velocity) {
         // <v_i, u(q)\cdot\nabla u(q)>
-        copy.local_rhs[i] += scratch.u_shape_val[i] * scratch.u_adv_0[q] *
+        copy.local_rhs[i] += (scratch.u_shape_val[i] * scratch.u_sol_0[q] +
+                              this->eqn_params.timestep *
+                                  scratch.u_shape_val[i] * scratch.u_adv_0[q]) *
                              scratch.fe_vals.JxW(q);
       }
       if (assemble_pressure) {

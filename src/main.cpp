@@ -5,6 +5,8 @@
 #include <deal.II/lac/trilinos_precondition.h>
 #include <deal.II/lac/trilinos_solver.h>
 #include <deal.II/lac/trilinos_sparse_matrix.h>
+#include <deal.II/lac/vector_operation.h>
+#include <deal.II/numerics/vector_tools_mean_value.h>
 #include <iostream>
 
 #include "assembly.h"
@@ -43,7 +45,7 @@ template <int dim> void Solver<dim>::run() {
 
   this->system_handler.initialise_dofs();
 
-  for (uint i = 0; i < 1000; i++) {
+  for (uint i = 0; i < 100; i++) {
     this->assembler.assemble_system();
 
     SolverControl cn;
@@ -53,7 +55,15 @@ template <int dim> void Solver<dim>::run() {
     solver.initialize(this->system_handler.system_matrix.block(0, 0));
     solver.solve(this->system_handler.sol_0.block(0),
                  this->system_handler.rhs.block(0));
-    this->system_handler.constraints.distribute(this->system_handler.sol_0);
+
+    TrilinosWrappers::MPI::BlockVector sol_0_loc;
+    sol_0_loc.reinit(this->system_handler.rhs);
+    sol_0_loc = this->system_handler.sol_0;
+
+    this->system_handler.constraints.distribute(sol_0_loc);
+
+    this->system_handler.sol_0 = sol_0_loc;
+    this->system_handler.export_solution(i);
 
     this->assembler.assemble_pressure();
 
@@ -62,22 +72,30 @@ template <int dim> void Solver<dim>::run() {
     solver.initialize(this->system_handler.system_matrix.block(1, 1));
     solver.solve(this->system_handler.sol_0.block(1),
                  this->system_handler.rhs.block(1));
+    sol_0_loc = this->system_handler.sol_0;
 
-    this->pcout << "\tVelocity update..." << std::endl;
-    TrilinosWrappers::MPI::Vector tmp;
-    tmp.reinit(this->system_handler.sol_0.block(0));
+    // sol_0_loc.block(1) = this->system_handler.sol_0.block(1);
+    // this->system_handler.constraints.distribute(sol_0_loc);
 
-    this->system_handler.system_matrix.block(0, 1).vmult(
-        tmp, this->system_handler.sol_0.block(1));
-    this->system_handler.sol_0.block(0).add(-1.0, tmp);
+    // VectorTools::subtract_mean_value(sol_0_loc.block(1));
 
-    this->pcout << "Solution Norms:" << "\n\tBlock 0: "
-                << this->system_handler.sol_0.block(0).l2_norm()
-                << "\n\tBlock 1: "
-                << this->system_handler.sol_0.block(1).l2_norm() << std::endl;
+    // this->pcout << "\tVelocity update..." << std::endl;
+    // TrilinosWrappers::MPI::Vector tmp;
+    // tmp.reinit(sol_0_loc.block(0));
 
-    if (i % 10 == 0)
-      this->system_handler.export_solution(i / 10);
+    // this->system_handler.system_matrix.block(0, 1).vmult(tmp,
+    //                                                     sol_0_loc.block(1));
+
+    // sol_0_loc.block(0).add(-1.0,
+    // tmp);
+    // this->system_handler.constraints.distribute(sol_0_loc);
+
+    this->system_handler.sol_0 = sol_0_loc;
+
+    this->pcout << "Solution "
+                   "Norms:"
+                << "\n\tBlock 0: " << sol_0_loc.block(0).l2_norm()
+                << "\n\tBlock 1: " << sol_0_loc.block(1).l2_norm() << std::endl;
   }
 }
 
@@ -93,7 +111,7 @@ int main(int argc, char* argv[]) {
   fe_params.max_refine = 10;
   fe_params.degree = 1;
 
-  eqn_params.timestep = 1e-4;
+  eqn_params.timestep = 1e-3;
   eqn_params.nu = 1e-2;
   eqn_params.density = 1;
 

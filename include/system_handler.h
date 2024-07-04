@@ -127,6 +127,8 @@ SystemHandler<dim>::SystemHandler(const std::string filename, MPI_Comm mpi_comm,
     triangulation.add_periodicity(matched_pairs_X);
   }
 
+  triangulation.refine_global(1);
+
   this->print_grid_information();
 
   fe_sub_blocks[dim] = 1;
@@ -142,7 +144,7 @@ template <int dim> void SystemHandler<dim>::initialise_dofs() {
 
   -------------------------------------------------------------------------*/
   this->dof_handler.distribute_dofs(this->fe_system);
-  DoFRenumbering::Cuthill_McKee(this->dof_handler);
+  // DoFRenumbering::Cuthill_McKee(this->dof_handler);
   DoFRenumbering::component_wise(this->dof_handler, fe_sub_blocks);
 
   /*-------------------------------------------------------------------------
@@ -207,19 +209,8 @@ template <int dim> void SystemHandler<dim>::initialise_dofs() {
     PRESSURE
 
   -------------------------------------------------------------------------*/
-  {
-    if (Utilities::MPI::this_mpi_process(mpi_comm) == 0) {
-      FEValuesExtractors::Scalar pressure(dim);
-      ComponentMask flow_mask = this->fe_system.component_mask(pressure);
 
-      std::vector<IndexSet> pressure_dofs =
-          DoFTools::locally_owned_dofs_per_component(this->dof_handler,
-                                                     flow_mask);
-      const types::global_dof_index first_pressure_dof =
-          pressure_dofs[dim].nth_index_in_set(0);
-      this->constraints.add_line(first_pressure_dof);
-    }
-  }
+  // Subtract mean from solution
 
   /*-------------------------------------------------------------------------
 
@@ -253,17 +244,13 @@ template <int dim> void SystemHandler<dim>::initialise_dofs() {
 
     velocity_mask.set(0, true);
     velocity_mask.set(dim, true);
-    const FEValuesExtractors::Vector velocity(0);
-    ComponentMask flow_mask = this->fe_system.component_mask(velocity);
-    flow_mask.set(dim, true);
-
     using FacePair =
         GridTools::PeriodicFacePair<typename DoFHandler<dim>::cell_iterator>;
     std::vector<FacePair> periodicity_vector_X;
     GridTools::collect_periodic_faces(this->dof_handler, 20, 21, 0,
                                       periodicity_vector_X);
     DoFTools::make_periodicity_constraints<dim, dim>(
-        periodicity_vector_X, this->constraints, flow_mask);
+        periodicity_vector_X, this->constraints, velocity_mask);
   }
 
   this->constraints.make_consistent_in_parallel(owned_index_set, relevant_set,
@@ -295,7 +282,7 @@ void SystemHandler<dim>::initialise_linear_system(
   this->sol_0.reinit(rel_part, mpi_comm);
   this->sol_1.reinit(this->sol_0);
 
-  this->rhs.reinit(local_part, rel_part, mpi_comm);
+  this->rhs.reinit(local_part, mpi_comm);
 
   this->pcout << "Solution sizes:" << std::endl;
   this->pcout << "\tBlock 0: " << this->sol_0.block(0).size()
@@ -314,9 +301,18 @@ template <int dim> void SystemHandler<dim>::export_solution(uint i) {
   std::vector<std::string> component_names(dim, "velocity");
   component_names.emplace_back("pressure");
 
+  TrilinosWrappers::MPI::BlockVector sol_0_loc;
+  sol_0_loc.reinit(this->rhs);
+  sol_0_loc = this->sol_0;
+
   DataOut<dim> data_out;
-  data_out.add_data_vector(this->dof_handler, this->sol_0, component_names,
+  data_out.add_data_vector(this->dof_handler, sol_0_loc, component_names,
                            data_interp);
+
+  Vector<float> subdomain(this->triangulation.n_active_cells());
+  for (unsigned int i = 0; i < subdomain.size(); ++i)
+    subdomain(i) = triangulation.locally_owned_subdomain();
+  data_out.add_data_vector(subdomain, "subdomain");
 
   data_out.build_patches();
 
